@@ -10,30 +10,21 @@ import subprocess
 
 
 def ask_output_foleder(file):
-    output_folder = input(
-        f"Please enter the output path you want to save the {file} to: ")
-    os.makedirs(output_folder, exist_ok=True)  # 创建输出文件夹（如果不存在）
-    print(f'The output path has been set: {output_folder}')
-    print('#---------------------------')
-    return output_folder
+    while True:
+        output_folder = input(f"Please enter the output path you want to save the {file} to: ").rstrip("/\\")
+        try:
+            os.makedirs(output_folder, exist_ok=True)
+            print(f'The output path has been set: {output_folder}')
+            print('#---------------------------')
+            return output_folder
+        except Exception as e:
+            print(f"An error occurred while creating the folder: {e}. Please try again.")
 
 
-def ask_continue():
-    choice = input(f'Do you want to continue the program? (Y/N): ').strip().upper()
-    if choice == 'Y':
-        print("The program will continue to run!")
-        print('#---------------------------')
-    else:
-        print("Exiting the program.")
-        print('#---------------------------')
-        exit()
-
-
-# get ID并简单分析
-def get_ids():
-    global fasta_path
-    flag = True
-    while flag == True:
+# 获取用户想要的数据并简单分析，告知用户数据包含的序列数量和物种数，直到用户得到满意的数据
+def get_data():
+    print('#===========================')
+    while True:
         # get input
         taxonomic_group, protein_family, number = get_user_input()
         # 搜索NCBI ID
@@ -45,39 +36,22 @@ def get_ids():
         # 检索不到数据，退出程序
         else:
             print("Unable to find the data you want. Please enter the correct protein family and taxonomic group.")
-            print('#===========================')
             continue
-
-        # 分析FASTA数据
+        # 询问用户保存地址
+        fasta_output = ask_output_foleder("fasta data")
+        # 分析FASTA数据，查看包含序列数量和物种数量
         sequence_count, species_count, species_set = parse_fasta(fasta_data)
         # 告知用户序列数和物种数
         print(f"The dataset contains {sequence_count} sequences from {species_count} species.")
-        if fasta_output is None:
-            fasta_output = ask_output_foleder("fasta_data")
+        # 保存fasta data来让用户检查
         fasta_file = save_fasta_to_file(fasta_data, protein_family, taxonomic_group, fasta_output)
 
-        spell == False
-        while spell == False:
-        # 给用户选择是否继续的选项
-            choice = input(f"Do you want to continue with this dataset: {fasta_file} ? (Y/N): ").strip().upper()
-            # 如果选择继续
-            if choice == 'Y':
-                print("Continuing with the dataset...")
-                print('#===========================')
-                flag = False
-                spell = True
-            # 如果选择退出
-            elif choice == 'N':
-                print("Please choose a different dataset.")
-                print('#===========================')
-                spell = True
-            else:
-                print("Unable to recognize your input, please follow the prompts to enter!")
-
-    return fasta_file, taxonomic_group, protein_family, number
+        # 询问用户对数据是否满意，如果不满意，return none值，进入循环；如果满意，return数据，跳出循环
+        if ask_continue(fasta_file):
+            return fasta_file, taxonomic_group, protein_family
 
 
-# 获取用户输入
+# 获取用户输入，想要搜索的taxonomic group和protein_family以及序列的最大数量
 def get_user_input():
     # 获取用户输入的分类群
     taxonomic_group = input(
@@ -85,19 +59,19 @@ def get_user_input():
     # 获取用户输入的蛋白质家族
     protein_family = input(
         "Please enter the protein family you want to analyze (e.g., glucose-6-phosphatase, kinases, cyclases, transporters): ")
-    number = input(
+    maxnum = input(
         "Please enter the maximum number of sequences you want to search for (Recommended: 1000; Warning: A large quantity may cause access to NCBI to fail): ")
-    print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max number = {number}")
-    print('#===========================')
-    return taxonomic_group, protein_family, number
+    print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max number = {maxnum}")
+    print('#---------------------------')
+    return taxonomic_group, protein_family, maxnum
 
 
-def search_ncbi_ids(taxonomic_group, protein_family, number):
+def search_ncbi_ids(taxonomic_group, protein_family, maxnum):
     # 构建Entrez esearch URL
     base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     # 搜索条件有待商榷
     query = f"{protein_family}[Title] AND {taxonomic_group}[Organism]"
-    params = dict(db="protein", term=query, retmode="json", retmax=number)
+    params = dict(db="protein", term=query, retmode="json", retmax=maxnum)
     url = base_url + "?" + urllib.parse.urlencode(params)
 
     # 发送请求
@@ -161,11 +135,30 @@ def save_fasta_to_file(fasta_data, protein_family, taxonomic_group, directory):
     # 写入数据到文件
     with open(fasta_path, 'w') as file:
         file.write(fasta_data)
-    print(f"Fasta data has been saved to {fasta_path}. You can check it.")
+    print(f"Fasta data has been saved to: {fasta_path}. You can check it now.")
 
     return f"{fasta_path}"
 
 
+# 询问是否要用这个数据做后续工作
+def ask_continue(fasta_file):
+    while True:
+        # 给用户选择是否继续的选项
+        choice = input(f"Do you want to continue with this dataset: {fasta_file} ? (Y/N): ").strip().upper()
+        # 如果选择继续
+        if choice == 'Y':
+            print("Continuing with the dataset...")
+            print('#===========================')
+            return True
+        # 如果选择换数据
+        elif choice == 'N':
+            print('#===========================')
+            print("Please choose a different dataset.")
+            return False
+        else:
+            print("Unable to recognize your input, please follow the prompts to enter!")
+
+# conservation analysis的整体模块
 def conservation_analysis(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
     print("We will  determine, and plot, the level of conservation between the protein sequences！")
@@ -304,9 +297,9 @@ def scan_prosite_motifs(protein_family, taxonomic_group, fasta_file):
     # 该模块运行结束
     print("All sequences have been processed.")
     print('#===========================')
-    # check the emboos_data path
 
 
+# check the emboos_data path
 def check_emboss_environment(fasta_file):
     emboss_data = os.environ.get('EMBOSS_DATA')
     if emboss_data is not None:
@@ -348,7 +341,7 @@ def check_emboss_environment(fasta_file):
             print('#---------------------------')
 
 
-# 切开FASTA文件
+# 切开FASTA文件，把序列单独保存
 def cut_fasta(fasta_file):
     sequences = {}
     with open(fasta_file, 'r') as file:
@@ -397,15 +390,40 @@ def print_progress_bar(progress, iteration, total, bar_length=50):
 
 
 def main():
-    # get ID并简单分析
-    fasta_file, taxonomic_group, protein_family, number = get_ids()
+    # 第一步，get data并简单分析
+    fasta_file, taxonomic_group, protein_family, = get_data()
     # 仅测试用
     # taxonomic_group = f'Aves'
     # protein_family = f'glucose-6-phosphatase'
     # number = 1000
+
+    # 进入交互界面，选择要使用的功能
+    while True:
+        print(f"\nWhat do you want to do next with your data in {fasta_file}?")
+        print("1. Conversation analysis")
+        print("2. Scan with motifs")
+        print("3. Change dataset")
+        print("4. Exit program")
+
+        choice = input('Please enter the number before the option (e.g., 1, 2, 3): ')
+
+        if choice == '1':
+            # 执行 Conservation Analysis
+            conservation_analysis(protein_family, taxonomic_group, fasta_file)
+        elif choice == '2':
+            # 执行 Scan the Prosite Motifs
+            scan_prosite_motifs(protein_family, taxonomic_group, fasta_file)
+        elif choice == '3':
+            # 更改数据
+            fasta_file, taxonomic_group, protein_family = get_data()
+        elif choice == '4':
+            # 退出程序
+            print("Exiting the program.")
+            print('#===========================')
+            exit()
+        else:
+            print("Unable to recognize your input, please follow the prompts to enter!")
     # 保守性分析
-
-
 #    print('#===========================')
 #    conservation_analysis(protein_family, taxonomic_group, fasta_file)
 #    print('#===========================')
