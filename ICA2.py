@@ -167,21 +167,20 @@ def conservation_analysis(protein_family, taxonomic_group, fasta_file):
     aligned_file = align_sequence(protein_family, taxonomic_group, fasta_file, con_output)
 
     # 运行infoalign并获取输出
-    infoalign_output = run_infoalign(aligned_file)
+    infoalign_output = run_infoalign(protein_family, taxonomic_group, aligned_file, con_output)
     if infoalign_output:
         # 解析输出
         sequences_info = parse_infoalign_output(infoalign_output)
-        print(f"Alignment sequences have been parsed")
-        # 根据同一性阈值筛选序列ID
+        # 根据change % 阈值筛选序列ID
         identity_threshold = 70
-        filtered_sequence_ids = [seq_id for seq_id, Ident in sequences_info.items() if
-                                 Ident >= identity_threshold]
+        filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
+                                 percent_identity >= identity_threshold]
         # 从原始FASTA文件中提取筛选出的序列
         filtered_sequences = extract_sequences(aligned_file, filtered_sequence_ids)
         print(f"Sequences with identity >= {identity_threshold}%: {filtered_sequences}")
         print(f"Alignment sequences have been filtered with identity threshold = {identity_threshold}")
         # 将筛选出的序列保存为新的FASTA文件
-        selected_aligned_file = save_fasta(filtered_sequences, protein_family, taxonomic_group, con_output)
+        selected_aligned_file = save_selected_fasta(filtered_sequences, protein_family, taxonomic_group, con_output)
 
         # 可视化保守分数,需要用户输入windowsize
         plot_con(protein_family, taxonomic_group, selected_aligned_file, con_output)
@@ -198,7 +197,7 @@ def align_sequence(protein_family, taxonomic_group, fasta_file, directory):
 
     try:
         print('Clustal Omega is working for you to align the sequences. Please be patient and wait.')
-        subprocess.run(["clustalo", "-i", fasta_file, "-o", aligned_file, "--force"], check=True)
+#        subprocess.run(["clustalo", "-i", fasta_file, "-o", aligned_file, "--force"], check=True)
         print(f"Aligned sequences have been saved to {aligned_file}")
         return aligned_file
     except subprocess.CalledProcessError as e:
@@ -206,30 +205,37 @@ def align_sequence(protein_family, taxonomic_group, fasta_file, directory):
 
 
 # 调用infoalign并捕获输出
-def run_infoalign(alignment_file):
+def run_infoalign(protein_family, taxonomic_group, alignment_file, directory):
+    file_name = f'{protein_family}_in_{taxonomic_group}_aligned_info'
+    infoalign_file = os.path.join(directory, file_name)
     try:
         print('Infroalign is working for you to analyse the sequences.')
-        cmd = ['infoalign', alignment_file]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        print('Infoalign analyses successfully!')
-        return result.stdout if result.returncode == 0 else None
+        subprocess.run(['infoalign', alignment_file, '-out', infoalign_file], check=True)
+        print(f'Infoalign analyses result has been saved to {infoalign_file}')
+        return infoalign_file
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
 
 
 # 解析infoalign的输出
-def parse_infoalign_output(infoalign_output):
-    print("Parsing the output of infoalign.")
+def parse_infoalign_output(output_file):
+    print("Parsing infoalign output.")
     # 创建一个字典来保存序列的信息
     sequences_info = {}
+
     # 按行分割输出文本
-    lines = infoalign_output.strip().split('\n')
+    with open(output_file, 'r') as file:
+        lines = file.readlines()
+
     # 跳过头部
-    for line in lines[3:]:
-        parts = line.split()
-        seq_id = parts[0]
-        percent_identity = float(parts[2].strip('%'))
+    for line in lines[1:]:  # 第一行是标题
+        parts = line.split() # id列和长度列之间有空格
+        seq_id = parts[1]  # 序列ID在第二列
+        parts2 = line.split('\t') # change % 后面没有空格
+        percent_identity = float(parts2[-3])  # change % 在倒数第三列
         sequences_info[seq_id] = percent_identity
+    print(sequences_info)
+    print(f"Alignment sequences have been parsed")
     return sequences_info
 
 
@@ -240,16 +246,16 @@ def extract_sequences(fasta_file, sequence_ids):
         record = None
         for line in f:
             if line.startswith('>'):
-                record = line.strip().split('>')[1]
-                sequences[record] = ''
-            elif record:
+                record = line.strip().split()[0][1:]
+                if record in sequence_ids:
+                    sequences[record] = ''
+            elif record and record in sequence_ids:
                 sequences[record] += line.strip()
-    # 只保留筛选出的序列
-    return {seq_id: sequences[seq_id] for seq_id in sequence_ids if seq_id in sequences}
+    return sequences
 
 
 # 将序列保存为FASTA格式
-def save_fasta(sequences, protein_family, taxonomic_group, directory):
+def save_selected_fasta(sequences, protein_family, taxonomic_group, directory):
     file_name = f'{protein_family}_in_{taxonomic_group}_aligned_selected.fasta'
     # 替换可能导致文件系统问题的字符
     file_name = file_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
