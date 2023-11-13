@@ -11,7 +11,7 @@ import subprocess
 
 def ask_output_foleder(file):
     while True:
-        output_folder = input(f"Please enter the output path you want to save the {file} to: ").rstrip("/\\")
+        output_folder = input(f"Please enter the output path you want to save the {file} to: ").rstrip(" /\\")
         try:
             os.makedirs(output_folder, exist_ok=True)
             print(f'The output path has been set: {output_folder}')
@@ -128,7 +128,6 @@ def save_fasta_to_file(fasta_data, protein_family, taxonomic_group, directory):
     file_name = f"{protein_family}_in_{taxonomic_group}.fasta"
     # 替换可能导致文件系统问题的字符
     file_name = file_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-
     # 文件路径
     fasta_path = os.path.join(directory, file_name)
 
@@ -161,7 +160,7 @@ def ask_continue(fasta_file):
 # conservation analysis的整体模块
 def conservation_analysis(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
-    print("We will  determine, and plot, the level of conservation between the protein sequences！")
+    print("We will determine and plot the level of conservation between the protein sequences！")
     con_output = ask_output_foleder('Conservation Analysis')
     #### 是否要限定序列的数量
     # 序列对齐
@@ -175,15 +174,14 @@ def conservation_analysis(protein_family, taxonomic_group, fasta_file):
         print(f"Alignment sequences have been parsed")
         # 根据同一性阈值筛选序列ID
         identity_threshold = 70
-        filtered_sequence_ids = [seq_id for seq_id, identity in sequences_info.items() if
-                                 identity >= identity_threshold]
+        filtered_sequence_ids = [seq_id for seq_id, Ident in sequences_info.items() if
+                                 Ident >= identity_threshold]
         # 从原始FASTA文件中提取筛选出的序列
         filtered_sequences = extract_sequences(aligned_file, filtered_sequence_ids)
         print(f"Sequences with identity >= {identity_threshold}%: {filtered_sequences}")
         print(f"Alignment sequences have been filtered with identity threshold = {identity_threshold}")
         # 将筛选出的序列保存为新的FASTA文件
         selected_aligned_file = save_fasta(filtered_sequences, protein_family, taxonomic_group, con_output)
-        print(f"Filtered sequences saved to {selected_aligned_file}")
 
         # 可视化保守分数,需要用户输入windowsize
         plot_con(protein_family, taxonomic_group, selected_aligned_file, con_output)
@@ -195,10 +193,11 @@ def conservation_analysis(protein_family, taxonomic_group, fasta_file):
 
 # 序列对齐，请确保你安装了clustal omega
 def align_sequence(protein_family, taxonomic_group, fasta_file, directory):
-    file_name = f'{directory}/{protein_family}_in_{taxonomic_group}_aligned.fasta'
+    file_name = f'{protein_family}_in_{taxonomic_group}_aligned.fasta'
     aligned_file = os.path.join(directory, file_name)
 
     try:
+        print('Clustal Omega is working for you to align the sequences. Please be patient and wait.')
         subprocess.run(["clustalo", "-i", fasta_file, "-o", aligned_file, "--force"], check=True)
         print(f"Aligned sequences have been saved to {aligned_file}")
         return aligned_file
@@ -208,13 +207,19 @@ def align_sequence(protein_family, taxonomic_group, fasta_file, directory):
 
 # 调用infoalign并捕获输出
 def run_infoalign(alignment_file):
-    cmd = ['infoalign', alignment_file]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.stdout if result.returncode == 0 else None
+    try:
+        print('Infroalign is working for you to analyse the sequences.')
+        cmd = ['infoalign', alignment_file]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        print('Infoalign analyses successfully!')
+        return result.stdout if result.returncode == 0 else None
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred: {e}")
 
 
 # 解析infoalign的输出
 def parse_infoalign_output(infoalign_output):
+    print("Parsing the output of infoalign.")
     # 创建一个字典来保存序列的信息
     sequences_info = {}
     # 按行分割输出文本
@@ -246,12 +251,15 @@ def extract_sequences(fasta_file, sequence_ids):
 # 将序列保存为FASTA格式
 def save_fasta(sequences, protein_family, taxonomic_group, directory):
     file_name = f'{protein_family}_in_{taxonomic_group}_aligned_selected.fasta'
+    # 替换可能导致文件系统问题的字符
+    file_name = file_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
     selected_aligned_file = os.path.join(directory, file_name)
 
     with open(selected_aligned_file, 'w') as f:
         for seq_id, sequence in sequences.items():
             f.write(f'>{seq_id}\n')
             f.write(f'{sequence}\n')
+    print(f"Filtered sequences has been saved to: {selected_aligned_file}. You can check it now.")
     return selected_aligned_file
 
 
@@ -262,7 +270,9 @@ def plot_con(protein_family, taxonomic_group, selceted_aligned_file, directory):
     plotcon_output = os.path.join(directory, file_name)
 
     try:
+        print('Plotcon is working for you to plot the conservation level.')
         subprocess.run(["plotcon", "-sequence", selceted_aligned_file, "-graph", "png", "-goutfile", plotcon_output])
+        print(f'Plot has been saved to {plotcon_output}')
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
 
