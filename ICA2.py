@@ -23,7 +23,7 @@ def ask_output_foleder(file):
 
 # 获取用户想要的数据并简单分析，告知用户数据包含的序列数量和物种数，直到用户得到满意的数据
 def get_data():
-    print('#===========================')
+    print('#===========================\n')
     while True:
         # get input
         taxonomic_group, protein_family, number = get_user_input()
@@ -61,7 +61,7 @@ def get_user_input():
         "Please enter the protein family you want to analyze (e.g., glucose-6-phosphatase, kinases, cyclases, transporters): ")
     maxnum = input(
         "Please enter the maximum number of sequences you want to search for (Recommended: 1000; Warning: A large quantity may cause access to NCBI to fail): ")
-    print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max number = {maxnum}")
+    print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max number = {maxnum}...")
     print('#---------------------------')
     return taxonomic_group, protein_family, maxnum
 
@@ -160,7 +160,7 @@ def ask_continue(fasta_file):
 # conservation analysis的整体模块
 def conservation_analysis(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
-    print("We will determine and plot the level of conservation between the protein sequences！")
+    print("\nWe will determine and plot the level of conservation between the protein sequences！")
     con_output = ask_output_foleder('Conservation Analysis')
     #### 是否要限定序列的数量
     # 序列对齐
@@ -168,25 +168,27 @@ def conservation_analysis(protein_family, taxonomic_group, fasta_file):
 
     # 运行infoalign并获取输出
     infoalign_output = run_infoalign(protein_family, taxonomic_group, aligned_file, con_output)
+
+    #若infoalign有输出
     if infoalign_output:
         # 解析输出
         sequences_info = parse_infoalign_output(infoalign_output)
-        # 根据change % 阈值筛选序列ID
-        identity_threshold = 70
-        filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
-                                 percent_identity >= identity_threshold]
+        filtered_sequence_ids = ask_filter(sequences_info)
         # 从原始FASTA文件中提取筛选出的序列
         filtered_sequences = extract_sequences(aligned_file, filtered_sequence_ids)
-        print(f"Sequences with identity >= {identity_threshold}%: {filtered_sequences}")
-        print(f"Alignment sequences have been filtered with identity threshold = {identity_threshold}")
+#        print(f"Sequences with identity >= {identity_threshold}%: {filtered_sequences}")
+#        print(f"Alignment sequences have been filtered with identity threshold = {identity_threshold}")
         # 将筛选出的序列保存为新的FASTA文件
         selected_aligned_file = save_selected_fasta(filtered_sequences, protein_family, taxonomic_group, con_output)
 
         # 可视化保守分数,需要用户输入windowsize
         plot_con(protein_family, taxonomic_group, selected_aligned_file, con_output)
+
+    # 若infoalign没输出
     else:
         print("Error running infoalign.")
 
+    # conservation analysis模块结束，打印分割线
     print('#===========================')
 
 
@@ -196,7 +198,7 @@ def align_sequence(protein_family, taxonomic_group, fasta_file, directory):
     aligned_file = os.path.join(directory, file_name)
 
     try:
-        print('Clustal Omega is working for you to align the sequences. Please be patient and wait.')
+        print('Clustal Omega is working for you to align the sequences. Please be patient and wait...')
 #        subprocess.run(["clustalo", "-i", fasta_file, "-o", aligned_file, "--force"], check=True)
         print(f"Aligned sequences have been saved to {aligned_file}")
         return aligned_file
@@ -209,17 +211,19 @@ def run_infoalign(protein_family, taxonomic_group, alignment_file, directory):
     file_name = f'{protein_family}_in_{taxonomic_group}_aligned_info'
     infoalign_file = os.path.join(directory, file_name)
     try:
-        print('Infroalign is working for you to analyse the sequences.')
+        print('Infroalign is working for you to analyse the sequences...')
         subprocess.run(['infoalign', alignment_file, '-out', infoalign_file], check=True)
-        print(f'Infoalign analyses result has been saved to {infoalign_file}')
+        print(f'Infoalign analyses result has been saved to {infoalign_file}. You can check it now.')
+        print('#---------------------------')
         return infoalign_file
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
+        print('#---------------------------')
 
 
 # 解析infoalign的输出
 def parse_infoalign_output(output_file):
-    print("Parsing infoalign output.")
+    print("Parsing infoalign output...")
     # 创建一个字典来保存序列的信息
     sequences_info = {}
 
@@ -234,39 +238,60 @@ def parse_infoalign_output(output_file):
         parts2 = line.split('\t') # change % 后面没有空格
         percent_identity = float(parts2[-3])  # change % 在倒数第三列
         sequences_info[seq_id] = percent_identity
-    print(sequences_info)
-    print(f"Alignment sequences have been parsed")
+
+    print(f"Alignment sequences have been parsed.")
+    print('#---------------------------')
     return sequences_info
 
 
+def ask_filter(sequences_info):
+    while True:
+        # 根据change % 阈值筛选序列ID
+        filter= input('Please enter the criteria you want to use to filter for changing values (format example: >70): ')
+        if filter.startswith('>'):
+            identity_threshold = float(filter.strip().split()[0][1:])
+            filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
+                                 percent_identity >= identity_threshold]
+            return filtered_sequence_ids
+        elif filter.startswith('<'):
+            identity_threshold = float(filter.strip().split()[0][1:])
+            filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
+                                 percent_identity <= identity_threshold]
+            return filtered_sequence_ids
+        else:
+            print("Unable to recognize your input, please follow the prompts to enter!")
+
+
 # 从FASTA文件中提取序列
-def extract_sequences(fasta_file, sequence_ids):
-    sequences = {}
+def extract_sequences(fasta_file, filtered_sequence_ids):
+    filtered_sequences = {}
     with open(fasta_file, 'r') as f:
         record = None
         for line in f:
             if line.startswith('>'):
                 record = line.strip().split()[0][1:]
-                if record in sequence_ids:
-                    sequences[record] = ''
-            elif record and record in sequence_ids:
-                sequences[record] += line.strip()
-    return sequences
+
+                if record in filtered_sequence_ids:
+                    filtered_sequences[record] = ''
+            elif record and record in filtered_sequence_ids:
+                filtered_sequences[record] += line.strip()
+    return filtered_sequences
 
 
 # 将序列保存为FASTA格式
-def save_selected_fasta(sequences, protein_family, taxonomic_group, directory):
-    file_name = f'{protein_family}_in_{taxonomic_group}_aligned_selected.fasta'
+def save_selected_fasta(filtered_sequences, protein_family, taxonomic_group, directory):
+    file_name = f'{protein_family}_in_{taxonomic_group}_aligned_filtered.fasta'
     # 替换可能导致文件系统问题的字符
     file_name = file_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    selected_aligned_file = os.path.join(directory, file_name)
+    filtered_aligned_file = os.path.join(directory, file_name)
 
-    with open(selected_aligned_file, 'w') as f:
-        for seq_id, sequence in sequences.items():
+    with open(filtered_aligned_file, 'w') as f:
+        for seq_id, sequence in filtered_sequences.items():
             f.write(f'>{seq_id}\n')
             f.write(f'{sequence}\n')
-    print(f"Filtered sequences has been saved to: {selected_aligned_file}. You can check it now.")
-    return selected_aligned_file
+    print(f"Filtered sequences has been saved to: {filtered_aligned_file}. You can check it now.")
+    print('#---------------------------')
+    return filtered_aligned_file
 
 
 # 可视化保守水平,请确保你安装了emboss
@@ -278,7 +303,7 @@ def plot_con(protein_family, taxonomic_group, selceted_aligned_file, directory):
     try:
         print('Plotcon is working for you to plot the conservation level.')
         subprocess.run(["plotcon", "-sequence", selceted_aligned_file, "-graph", "png", "-goutfile", plotcon_output])
-        print(f'Plot has been saved to {plotcon_output}')
+        print(f'Plot has been saved to {plotcon_output}. You can check it now.')
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
 
@@ -286,7 +311,7 @@ def plot_con(protein_family, taxonomic_group, selceted_aligned_file, directory):
 # prosite基序比对
 def scan_prosite_motifs(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
-    print("We will scan protein sequences with motifs from the PROSITE database！")
+    print("\nWe will scan protein sequences with motifs from the PROSITE database！")
     # 询问用户并设置输出路径
     patmatmotifs_output = ask_output_foleder("patmatmotifs")
 
@@ -317,7 +342,39 @@ def scan_prosite_motifs(protein_family, taxonomic_group, fasta_file):
 
 # check the emboos_data path
 def check_emboss_environment(fasta_file):
+#    print('Checking the EMBOSS_DATA path...')
     emboss_data = os.environ.get('EMBOSS_DATA')
+    while True:
+        try:
+            # 使用 subprocess.run 执行命令
+            print(f'Checking the EMBOSS_DATA path: {emboss_data}.')
+            test_output = 'test_output'
+            result = subprocess.run(["patmatmotifs", "-sequence", fasta_file, "-outfile", test_output],
+                                    check=True,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE,
+                                    text=True)
+        except subprocess.CalledProcessError as e:
+            # 捕获错误并打印错误信息
+            print(f"EMBOSS_DATA path isn't correct: {e.stderr}")
+            print('#---------------------------')
+#            emboss_data = input(f'Please enter the correct EMOSS_DATA path: ')
+#            os.environ['EMBOSS_DATA'] = f'{emboss_data}'
+            if emboss_data is not None:
+                print(f"Currently EMBOSS_DATA: {emboss_data}")
+                emboss_data = input(f'Please enter the correct EMBOSS_DATA path: ')
+                os.environ['EMBOSS_DATA'] = f'{emboss_data}'
+            else:
+                print("EMBOSS_DATA: Environment variables not declared")
+                emboss_data = input(f'Please enter the EMBOSS_DATA path: ')
+                os.environ['EMBOSS_DATA'] = f'{emboss_data}'
+        else:
+            print(f'Congratulation! It is correct!')
+            print('#---------------------------')
+            break
+        finally:
+            os.remove(test_output)
+'''
     if emboss_data is not None:
         print(f"EMBOSS_DATA: {emboss_data}")
         choice = input(f'Do you want to change the EMBOSS_DATA path? (Y/N): ').strip().upper()
@@ -328,33 +385,11 @@ def check_emboss_environment(fasta_file):
         print("EMBOSS_DATA: Environment variables not declared")
         emboss_data = input(f'Please enter the EMBOSS_DATA path: ')
         os.environ['EMBOSS_DATA'] = f'{emboss_data}'
-
+'''
     # 测试用
-    os.environ['EMBOSS_DATA'] = '/localdisk/home/software/EMBOSS-6.6.0/share/EMBOSS/data/'
+#    os.environ['EMBOSS_DATA'] = '/localdisk/home/software/EMBOSS-6.6.0/share/EMBOSS/data/'
 
-    flag = False
-    while flag == False:
-        try:
-            # 使用 subprocess.run 执行命令
-            print(f'Checking the EMBOSS_DATA path: {emboss_data}.')
-            test_output = 'test_output'
-            result = subprocess.run(["patmatmotifs", "-sequence", fasta_file, "-outfile", test_output],
-                                    check=True,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE,
-                                    text=True)
-            flag = True
-        except subprocess.CalledProcessError as e:
-            # 捕获错误并打印错误信息
-            print(f"EMBOSS_DATA path isn't correct: {e.stderr}")
-            emboss_data = input(f'Please enter the correct EMOSS_DATA path: ')
-            os.environ['EMBOSS_DATA'] = f'{emboss_data}'
-            flag = False
-        else:
-            print(f'Congratulation! It is correct!')
-        finally:
-            os.remove(test_output)
-            print('#---------------------------')
+
 
 
 # 切开FASTA文件，把序列单独保存
@@ -406,22 +441,22 @@ def print_progress_bar(progress, iteration, total, bar_length=50):
 
 
 def main():
-    # 第一步，get data并简单分析
+    # 第一步，获取用户输入，找到用户想要的data并简单分析
     fasta_file, taxonomic_group, protein_family, = get_data()
     # 仅测试用
     # taxonomic_group = f'Aves'
     # protein_family = f'glucose-6-phosphatase'
     # number = 1000
 
-    # 进入交互界面，选择要使用的功能
+    # 得到data后，进入交互界面，用户选择要使用的功能，执行完功能后回到循环再次询问
     while True:
         print(f"\nWhat do you want to do next with your data in {fasta_file}?")
-        print("1. Conversation analysis")
+        print("1. Conservation analysis")
         print("2. Scan with motifs")
         print("3. Change dataset")
         print("4. Exit program")
 
-        choice = input('Please enter the number before the option (e.g., 1, 2, 3): ')
+        choice = input('\nPlease enter the number before the option (e.g., 1, 2, 3): ')
 
         if choice == '1':
             # 执行 Conservation Analysis
@@ -433,22 +468,14 @@ def main():
             # 更改数据
             fasta_file, taxonomic_group, protein_family = get_data()
         elif choice == '4':
-            # 退出程序
+            # 退出程序，打印退出文本
             print("Exiting the program.")
             print('#===========================')
             exit()
         else:
+            # 用户未按正确格式输入，返回循环重新输入
             print("Unable to recognize your input, please follow the prompts to enter!")
-    # 保守性分析
-#    print('#===========================')
-#    conservation_analysis(protein_family, taxonomic_group, fasta_file)
-#    print('#===========================')
-#    ask_continue()
 
-# prosite基序比对
-    scan_prosite_motifs(protein_family, taxonomic_group, fasta_file)
-# 询问是否继续
-    ask_continue()
 
 if __name__ == "__main__":
     main()
