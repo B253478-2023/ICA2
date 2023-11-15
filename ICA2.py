@@ -26,23 +26,15 @@ def get_data():
     print('#===========================\n')
     while True:
         # get input
-        taxonomic_group, protein_family, number = get_user_input()
+        taxonomic_group, protein_family, maxnum = get_user_input()
         # 搜索NCBI ID
-        protein_ids = search_ncbi_ids(taxonomic_group, protein_family, number)
-        # 如果检索不为空
-        if protein_ids:
-            #  获取FASTA数据
-            fasta_data = fetch_fasta_from_ncbi(protein_ids)
-        # 检索不到数据，退出程序
-        else:
-            print("Unable to find the data you want. Please enter the correct protein family and taxonomic group.")
-            continue
-        # 询问用户保存地址
-        fasta_output = ask_output_foleder("fasta data")
+        fasta_data = run_edirect(taxonomic_group, protein_family, maxnum)
         # 分析FASTA数据，查看包含序列数量和物种数量
         sequence_count, species_count, species_set = parse_fasta(fasta_data)
         # 告知用户序列数和物种数
         print(f"The dataset contains {sequence_count} sequences from {species_count} species.")
+        fasta_output = ask_output_foleder("fasta data")
+        # 询问用户保存地址
         # 保存fasta data来让用户检查
         fasta_file = save_fasta_to_file(fasta_data, protein_family, taxonomic_group, fasta_output)
 
@@ -64,6 +56,19 @@ def get_user_input():
     print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max number = {maxnum}...")
     print('#---------------------------')
     return taxonomic_group, protein_family, maxnum
+
+
+def run_edirect(taxonomic_group, protein_family, maxnum):
+    #query = f'"{protein_family}[Title] AND {taxonomic_group}[Organism]"'
+
+    cmd = f'esearch -db protein -query "{protein_family}[Title] AND {taxonomic_group}[Organism]" -retmax {maxnum} | efetch -format fasta'
+    #efetch_cmd = 'efetch -format fasta'
+    try:
+        result = subprocess.run(cmd, shell=True, check=True, text=True, capture_output=True)
+        return result.stdout
+    except subprocess.CalledProcessError as e:
+        print(f"An error occurred: {e}")
+        return None
 
 
 def search_ncbi_ids(taxonomic_group, protein_family, maxnum):
@@ -248,18 +253,18 @@ def ask_filter(sequences_info):
     while True:
         # 根据change % 阈值筛选序列ID
         filter= input('Please enter the criteria you want to use to filter for changing values (format example: >70): ')
-        if filter.startswith('>'):
+        if re.match(r'^>[0-9]+', filter):
             identity_threshold = float(filter.strip().split()[0][1:])
             filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
                                  percent_identity >= identity_threshold]
             return filtered_sequence_ids
-        elif filter.startswith('<'):
+        elif re.match(r'^<[0-9]+', filter):
             identity_threshold = float(filter.strip().split()[0][1:])
             filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
                                  percent_identity <= identity_threshold]
             return filtered_sequence_ids
         else:
-            print("Unable to recognize your input, please follow the prompts to enter!")
+            print("Invalid filter format. It should start with '>' or '<' followed by one or more digits!")
 
 
 # 从FASTA文件中提取序列
@@ -342,12 +347,11 @@ def scan_prosite_motifs(protein_family, taxonomic_group, fasta_file):
 
 # check the emboos_data path
 def check_emboss_environment(fasta_file):
-#    print('Checking the EMBOSS_DATA path...')
     emboss_data = os.environ.get('EMBOSS_DATA')
     while True:
         try:
             # 使用 subprocess.run 执行命令
-            print(f'Checking the EMBOSS_DATA path: {emboss_data}.')
+            print(f'Checking the EMBOSS_DATA path...')
             test_output = 'test_output'
             result = subprocess.run(["patmatmotifs", "-sequence", fasta_file, "-outfile", test_output],
                                     check=True,
@@ -386,10 +390,6 @@ def check_emboss_environment(fasta_file):
         emboss_data = input(f'Please enter the EMBOSS_DATA path: ')
         os.environ['EMBOSS_DATA'] = f'{emboss_data}'
 '''
-    # 测试用
-#    os.environ['EMBOSS_DATA'] = '/localdisk/home/software/EMBOSS-6.6.0/share/EMBOSS/data/'
-
-
 
 
 # 切开FASTA文件，把序列单独保存
@@ -440,6 +440,11 @@ def print_progress_bar(progress, iteration, total, bar_length=50):
         print()  # 打印最后的换行
 
 
+def blast_analysis(protein_family, taxonomic_group, fasta_file):
+    print('#===========================')
+    print("\nWe will scan protein sequences with motifs from the PROSITE database！")
+
+
 def main():
     # 第一步，获取用户输入，找到用户想要的data并简单分析
     fasta_file, taxonomic_group, protein_family, = get_data()
@@ -454,7 +459,8 @@ def main():
         print("1. Conservation analysis")
         print("2. Scan with motifs")
         print("3. Change dataset")
-        print("4. Exit program")
+        print("4. Blast analysis")
+        print("5. Exit program")
 
         choice = input('\nPlease enter the number before the option (e.g., 1, 2, 3): ')
 
@@ -468,6 +474,9 @@ def main():
             # 更改数据
             fasta_file, taxonomic_group, protein_family = get_data()
         elif choice == '4':
+            # 执行blast analysis
+            blast_analysis(protein_family, taxonomic_group, fasta_file)
+        elif choice == '5':
             # 退出程序，打印退出文本
             print("Exiting the program.")
             print('#===========================')
