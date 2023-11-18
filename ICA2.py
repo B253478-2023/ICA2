@@ -9,31 +9,42 @@ import json
 import subprocess
 
 
-def ask_output_foleder(file):
+def ask_output_foleder(folder_name):
     while True:
-        output_folder = input(f"Please enter the output path you want to save the {file} to: ").rstrip(" /\\")
+        output_folder = input(f"Please enter the output path you want to save the {folder_name} to: ").rstrip(" /\\")
+#       full_path = os.path.join(output_folder, folder_name)
         try:
             os.makedirs(output_folder, exist_ok=True)
-            print(f'The output path has been set: {output_folder}')
-            print('#---------------------------')
-            return output_folder
         except Exception as e:
             print(f"An error occurred while creating the folder: {e}. Please try again.")
+        else:
+            print(f'The output path for {folder_name} has been set: {output_folder}')
+            print('#---------------------------')
+            return output_folder
 
-
+# 打印进度条
+def print_progress_bar(progress, iteration, total, bar_length=50):
+    percent = ("{0:.1f}").format(100 * (iteration / float(total)))
+    filled_length = int(bar_length * iteration // total)
+    bar = '█' * filled_length + '-' * (bar_length - filled_length)
+    sys.stdout.write(f'\r{progress}: |{bar}| {percent}% Complete'), sys.stdout.flush()
+    if iteration == total:
+        print()  # 打印最后的换行
 # 获取用户想要的数据并简单分析，告知用户数据包含的序列数量和物种数，直到用户得到满意的数据
+
+
 def get_data():
     print('#===========================\n')
     while True:
         # get input
-        taxonomic_group, protein_family, maxnum = get_user_input()
+        taxonomic_group, protein_family, partial, maxnum = get_user_input()
         # 搜索NCBI ID
-        fasta_data = run_edirect(taxonomic_group, protein_family, maxnum)
+        fasta_data = run_edirect(taxonomic_group, protein_family, partial, maxnum)
         # 分析FASTA数据，查看包含序列数量和物种数量
         sequence_count, species_count, species_set = parse_fasta(fasta_data)
         # 告知用户序列数和物种数
         print(f"The dataset contains {sequence_count} sequences from {species_count} species.")
-        fasta_output = ask_output_foleder("fasta data")
+        fasta_output = ask_output_foleder("protein data")
         # 询问用户保存地址
         # 保存fasta data来让用户检查
         fasta_file = save_fasta_to_file(fasta_data, protein_family, taxonomic_group, fasta_output)
@@ -48,64 +59,55 @@ def get_user_input():
     # 获取用户输入的分类群
     taxonomic_group = input(
         "Please enter the taxonomic group you are interested in (e.g., Aves, Mammalia, Rodentia, Vertebrata): ")
+
     # 获取用户输入的蛋白质家族
     protein_family = input(
         "Please enter the protein family you want to analyze (e.g., glucose-6-phosphatase, kinases, cyclases, transporters): ")
-    maxnum = input(
-        "Please enter the maximum number of sequences you want to search for (Recommended: 1000; Warning: A large quantity may cause access to NCBI to fail): ")
-    print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max number = {maxnum}...")
+
+    # 是否要保留partial序列
+    while True:
+        partial = input(
+            "Do you want to keep the partial sequence? (Y/N): ").strip().upper()
+        if partial == "Y" or partial == "N":
+            break
+        else:
+            print("Unable to recognize your input, please follow the prompts to enter!")
+
+    # 获取保留序列的最大数量
+    while True:
+        try:
+            maxnum = int(input(
+                "Please enter the maximum number of sequences you want to search for (Recommended: 1000; Warning: A large quantity may cause access to NCBI to fail): "))
+            if maxnum > 0:
+                break
+            else:
+                print("Please enter a positive integer.")
+        except ValueError:
+            print("Invalid input. Please enter a valid positive integer.")
+
+    if partial == "Y":
+        print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism]，max amount = {maxnum}...")
+    elif partial == "N":
+        print(f"We will search in NCBI: {protein_family}[Title] AND {taxonomic_group}[Organism] NOT partial，max amount = {maxnum}...")
+
     print('#---------------------------')
-    return taxonomic_group, protein_family, maxnum
+    return taxonomic_group, protein_family, partial, maxnum
 
 
-def run_edirect(taxonomic_group, protein_family, maxnum):
-    #query = f'"{protein_family}[Title] AND {taxonomic_group}[Organism]"'
-
-    cmd = f'esearch -db protein -query "{protein_family}[Title] AND {taxonomic_group}[Organism]" -retmax {maxnum} | efetch -format fasta'
+def run_edirect(taxonomic_group, protein_family, partial, maxnum):
+    if partial == "Y":
+        query = f'"{protein_family}[Title] AND {taxonomic_group}[Organism]"'
+    elif partial == "N":
+        query = f'"{protein_family}[Title] AND {taxonomic_group}[Organism] NOT partial"'
+    cmd = f'esearch -db protein -query {query} -retmax {maxnum} | efetch -format fasta'
     #efetch_cmd = 'efetch -format fasta'
     try:
         result = subprocess.run(cmd, shell=True, check=True, text=True, capture_output=True)
-        return result.stdout
     except subprocess.CalledProcessError as e:
         print(f"An error occurred: {e}")
         return None
-
-
-def search_ncbi_ids(taxonomic_group, protein_family, maxnum):
-    # 构建Entrez esearch URL
-    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    # 搜索条件有待商榷
-    query = f"{protein_family}[Title] AND {taxonomic_group}[Organism]"
-    params = dict(db="protein", term=query, retmode="json", retmax=maxnum)
-    url = base_url + "?" + urllib.parse.urlencode(params)
-
-    # 发送请求
-    with urllib.request.urlopen(url) as response:
-        data = response.read()
-        search_results = json.loads(data)
-        id_list = search_results["esearchresult"]["idlist"]
-        return id_list
-
-
-# 获取id对应的fasta
-def fetch_fasta_from_ncbi(protein_ids):
-    # Construct the Entrez efetch URL for POST request
-    base_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-    params = {
-        "db": "protein",
-        "rettype": "fasta",
-        "retmode": "text"
-    }
-    # Encode parameters
-    data = urllib.parse.urlencode(params).encode('utf-8')
-    data += b"&id=" + ",".join(protein_ids).encode('utf-8')
-
-    # Make a POST request
-    request = urllib.request.Request(base_url, data=data)
-    with urllib.request.urlopen(request) as response:
-        fasta_data = response.read().decode('utf-8')
-        return fasta_data
-
+    else:
+        return result.stdout
 
 # 提取数据集中包含的序列数量和物种数量
 def parse_fasta(fasta_data):
@@ -162,32 +164,34 @@ def ask_continue(fasta_file):
         else:
             print("Unable to recognize your input, please follow the prompts to enter!")
 
+
 # conservation analysis的整体模块
 def conservation_analysis(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
     print("\nWe will determine and plot the level of conservation between the protein sequences！")
     con_output = ask_output_foleder('Conservation Analysis')
-    #### 是否要限定序列的数量
+
+
     # 序列对齐
-    aligned_file = align_sequence(protein_family, taxonomic_group, fasta_file, con_output)
+    aligned_file = align_sequence(protein_family, taxonomic_group, fasta_file, 'aligned', con_output)
 
     # 运行infoalign并获取输出
     infoalign_output = run_infoalign(protein_family, taxonomic_group, aligned_file, con_output)
 
     #若infoalign有输出
     if infoalign_output:
-        # 解析输出
+        # 提取infoalign输出的内容
         sequences_info = parse_infoalign_output(infoalign_output)
+        # 询问用户筛选条件
         filtered_sequence_ids = ask_filter(sequences_info)
         # 从原始FASTA文件中提取筛选出的序列
-        filtered_sequences = extract_sequences(aligned_file, filtered_sequence_ids)
-#        print(f"Sequences with identity >= {identity_threshold}%: {filtered_sequences}")
-#        print(f"Alignment sequences have been filtered with identity threshold = {identity_threshold}")
+        filtered_sequences = extract_sequences(fasta_file, filtered_sequence_ids)
         # 将筛选出的序列保存为新的FASTA文件
-        selected_aligned_file = save_selected_fasta(filtered_sequences, protein_family, taxonomic_group, con_output)
-
+        selected_fasta_file = save_selected_fasta(filtered_sequences, protein_family, taxonomic_group, con_output)
+        #把筛选出的序列从小进行序列对齐
+        aligned_filtered_file = align_sequence(protein_family, taxonomic_group, selected_fasta_file,'aligned_filtered', con_output)
         # 可视化保守分数,需要用户输入windowsize
-        plot_con(protein_family, taxonomic_group, selected_aligned_file, con_output)
+        plot_con(protein_family, taxonomic_group, aligned_filtered_file, con_output)
 
     # 若infoalign没输出
     else:
@@ -196,20 +200,23 @@ def conservation_analysis(protein_family, taxonomic_group, fasta_file):
     # conservation analysis模块结束，打印分割线
     print('#===========================')
 
+    return aligned_file
 
 # 序列对齐，请确保你安装了clustal omega
-def align_sequence(protein_family, taxonomic_group, fasta_file, directory):
-    file_name = f'{protein_family}_in_{taxonomic_group}_aligned.fasta'
+def align_sequence(protein_family, taxonomic_group, fasta_file, name, directory):
+    file_name = f'{protein_family}_in_{taxonomic_group}_{name}.fasta'
     aligned_file = os.path.join(directory, file_name)
 
     try:
         print('Clustal Omega is working for you to align the sequences. Please be patient and wait...')
-#        subprocess.run(["clustalo", "-i", fasta_file, "-o", aligned_file, "--force"], check=True)
-        print(f"Aligned sequences have been saved to {aligned_file}")
-        return aligned_file
+        subprocess.run(["clustalo", "-i", fasta_file, "-o", aligned_file, "--force"], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
-
+        print('#---------------------------')
+    else:
+        print(f"Aligned sequences have been saved to {aligned_file}")
+        print('#---------------------------')
+        return aligned_file
 
 # 调用infoalign并捕获输出
 def run_infoalign(protein_family, taxonomic_group, alignment_file, directory):
@@ -218,13 +225,14 @@ def run_infoalign(protein_family, taxonomic_group, alignment_file, directory):
     try:
         print('Infroalign is working for you to analyse the sequences...')
         subprocess.run(['infoalign', alignment_file, '-out', infoalign_file], check=True)
-        print(f'Infoalign analyses result has been saved to {infoalign_file}. You can check it now.')
-        print('#---------------------------')
-        return infoalign_file
+
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
         print('#---------------------------')
-
+    else:
+        print(f'Infoalign analyses result has been saved to {infoalign_file}. You can check it now.')
+        print('#---------------------------')
+        return infoalign_file
 
 # 解析infoalign的输出
 def parse_infoalign_output(output_file):
@@ -257,11 +265,13 @@ def ask_filter(sequences_info):
             identity_threshold = float(filter.strip().split()[0][1:])
             filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
                                  percent_identity >= identity_threshold]
+            print('#---------------------------')
             return filtered_sequence_ids
         elif re.match(r'^<[0-9]+', filter):
             identity_threshold = float(filter.strip().split()[0][1:])
             filtered_sequence_ids = [seq_id for seq_id, percent_identity in sequences_info.items() if
                                  percent_identity <= identity_threshold]
+            print('#---------------------------')
             return filtered_sequence_ids
         else:
             print("Invalid filter format. It should start with '>' or '<' followed by one or more digits!")
@@ -285,32 +295,32 @@ def extract_sequences(fasta_file, filtered_sequence_ids):
 
 # 将序列保存为FASTA格式
 def save_selected_fasta(filtered_sequences, protein_family, taxonomic_group, directory):
-    file_name = f'{protein_family}_in_{taxonomic_group}_aligned_filtered.fasta'
+    file_name = f'{protein_family}_in_{taxonomic_group}_filtered.fasta'
     # 替换可能导致文件系统问题的字符
     file_name = file_name.replace(" ", "_").replace("/", "_").replace("\\", "_")
-    filtered_aligned_file = os.path.join(directory, file_name)
+    filtered_file = os.path.join(directory, file_name)
 
-    with open(filtered_aligned_file, 'w') as f:
+    with open(filtered_file, 'w') as f:
         for seq_id, sequence in filtered_sequences.items():
             f.write(f'>{seq_id}\n')
             f.write(f'{sequence}\n')
-    print(f"Filtered sequences has been saved to: {filtered_aligned_file}. You can check it now.")
+    print(f"Filtered sequences has been saved to: {filtered_file}. You can check it now.")
     print('#---------------------------')
-    return filtered_aligned_file
+    return filtered_file
 
 
 # 可视化保守水平,请确保你安装了emboss
 def plot_con(protein_family, taxonomic_group, selceted_aligned_file, directory):
-    #    aligned_file = f'Conservation_Analysis/{protein_family}_in_{taxonomic_group}_aligned.fasta'
     file_name = f'{protein_family}_in_{taxonomic_group}_conplot.png'
     plotcon_output = os.path.join(directory, file_name)
 
     try:
         print('Plotcon is working for you to plot the conservation level.')
-        subprocess.run(["plotcon", "-sequence", selceted_aligned_file, "-graph", "png", "-goutfile", plotcon_output])
-        print(f'Plot has been saved to {plotcon_output}. You can check it now.')
+        subprocess.run(["plotcon", "-sequence", selceted_aligned_file, "-graph", "png", "-goutfile", plotcon_output], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error occurred: {e}")
+    else:
+        print(f'Plot has been saved to {plotcon_output}. You can check it now.')
 
 
 # prosite基序比对
@@ -318,7 +328,7 @@ def scan_prosite_motifs(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
     print("\nWe will scan protein sequences with motifs from the PROSITE database！")
     # 询问用户并设置输出路径
-    patmatmotifs_output = ask_output_foleder("patmatmotifs")
+    patmatmotifs_output = ask_output_foleder("Patmatmotifs")
 
     # 检查emboss_data的路径设置
     check_emboss_environment(fasta_file)
@@ -342,17 +352,21 @@ def scan_prosite_motifs(protein_family, taxonomic_group, fasta_file):
 
     # 该模块运行结束
     print("All sequences have been processed.")
+    print('#---------------------------')
+
+    extract_motif_hits(patmatmotifs_output, protein_family, taxonomic_group)
     print('#===========================')
 
 
 # check the emboos_data path
 def check_emboss_environment(fasta_file):
     emboss_data = os.environ.get('EMBOSS_DATA')
+    test_output = 'test_output'
+
     while True:
         try:
             # 使用 subprocess.run 执行命令
             print(f'Checking the EMBOSS_DATA path...')
-            test_output = 'test_output'
             result = subprocess.run(["patmatmotifs", "-sequence", fasta_file, "-outfile", test_output],
                                     check=True,
                                     stdout=subprocess.PIPE,
@@ -378,18 +392,6 @@ def check_emboss_environment(fasta_file):
             break
         finally:
             os.remove(test_output)
-'''
-    if emboss_data is not None:
-        print(f"EMBOSS_DATA: {emboss_data}")
-        choice = input(f'Do you want to change the EMBOSS_DATA path? (Y/N): ').strip().upper()
-        if choice == 'Y':
-            emboss_data = input(f'Please enter the environment variables path: ')
-            os.environ['EMBOSS_DATA'] = f'{emboss_data}'
-    else:
-        print("EMBOSS_DATA: Environment variables not declared")
-        emboss_data = input(f'Please enter the EMBOSS_DATA path: ')
-        os.environ['EMBOSS_DATA'] = f'{emboss_data}'
-'''
 
 
 # 切开FASTA文件，把序列单独保存
@@ -420,8 +422,11 @@ def run_patmatmotifs(sequence, seq_id, patmatmotifs_output):
     with open(temp_sequence_file, 'w') as temp_file:
         temp_file.write(f'>{seq_id}\n{sequence}\n')
 
+    #输出路径为：用户设置路径/patmatmotifs/patmatmotifs_output_{seq_id}.txt
+    patmotmotifs_path = os.path.join(patmatmotifs_output, 'patmatmotifs')
+    output_file = os.path.join(patmotmotifs_path, f'patmatmotifs_output_{seq_id}.txt')
+
     # 运行patmatmotifs
-    output_file = os.path.join(patmatmotifs_output, f'patmatmotifs_output_{seq_id}.txt')
     command = ['patmatmotifs', '-sequence', temp_sequence_file, '-outfile', output_file]
     result = subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if result.returncode != 0:
@@ -430,53 +435,243 @@ def run_patmatmotifs(sequence, seq_id, patmatmotifs_output):
     os.remove(temp_sequence_file)
 
 
-# 打印进度条
-def print_progress_bar(progress, iteration, total, bar_length=50):
-    percent = ("{0:.1f}").format(100 * (iteration / float(total)))
-    filled_length = int(bar_length * iteration // total)
-    bar = '█' * filled_length + '-' * (bar_length - filled_length)
-    sys.stdout.write(f'\r{progress}: |{bar}| {percent}% Complete'), sys.stdout.flush()
-    if iteration == total:
-        print()  # 打印最后的换行
+# 提取并总结patmatmotifs输出文件中相关的motifs信息
+def extract_motif_hits(output_folder, protein_family, taxonomic_group):
+
+    # 保存路径为:用户设置路径/{protein_family}_in_{taxonomic_group}_motif_hits_summary.txt
+    # 创建总结文件名
+    summary_file_name = f'{protein_family}_in_{taxonomic_group}_motif_hits_summary.txt'
+    summary_file = os.path.join(output_folder, summary_file_name)
+
+    # 为打印进度条做准备
+    processed_file = 0
+    count = 0
+    for file_name in os.listdir(output_folder):
+        if file_name.startswith('patmatmotifs_output_'):
+            count += 1
+
+    # 打开总结文件
+    with open(summary_file, 'w') as summary:
+        # 遍历所有patmatmotifs输出文件
+        for file_name in os.listdir(output_folder):
+            # 确保只遍历输出文件
+            if file_name.startswith('patmatmotifs_output_'):
+                # 打开文件
+                with open(os.path.join(output_folder, file_name), 'r') as file:
+                    content = file.read()
+                    # 如果hit count 不为0，即存在相关motifs
+                    if "HitCount: 0" not in content:
+                        # 写入文件名
+                        summary.write(f"File: {file_name}\n")
+                        # 从sequence行开始记录信息
+                        start = content.find("# Sequence:")
+                        end = content.find("#--", start)
+                        summary.write(content[start:end])
+                        # 分隔每个序列
+                        summary.write("----------------------------------\n\n")
+
+                processed_file += 1
+                print_progress_bar('Summary', processed_file, count, bar_length=50)
+
+    # 打印完成语句
+    print(f"The relevant motif information has been saved to: {summary_file}.")
 
 
 def blast_analysis(protein_family, taxonomic_group, fasta_file):
     print('#===========================')
-    print("\nWe will scan protein sequences with motifs from the PROSITE database！")
+    print(f"\nWe will use the previously obtained sequence: {fasta_file} as the blast database!！")
+    print("Before conducting blast analysis, please ensure that you have obtained the sequence you want to use for blast analysis in advance! ")
+
+    while True:
+        choice = input("Do you want to continue with it? (Y/N): ").strip().upper()
+            # 如果选择继续
+        if choice == 'Y':
+            print("Continuing!")
+            print('#---------------------------')
+            break
+            # 如果选择换数据
+        elif choice == 'N':
+            print("Returning to Options Menu")
+            print('#===========================')
+            return
+        else:
+            print("Unable to recognize your input, please follow the prompts to enter!")
+
+    blast_output = ask_output_foleder('Blast Analysis')
+    blastdb = run_mkdb(protein_family, taxonomic_group, fasta_file, blast_output)
+
+    # 获取用户想要blast的类型
+    while True:
+        blast_type = input("Please enter BLAST query type (blastp, blastx): ").strip()
+        if blast_type != "blastp" and blast_type != "blastx":
+            print("Unable to recognize your input, please follow the prompts to enter!")
+            print('#---------------------------')
+        else:
+            break
+
+    # 运行 BLAST
+    run_blast(protein_family, taxonomic_group, blast_type, blastdb, blast_output)
+    print('#===========================')
+
+
+def run_mkdb(protein_family, taxonomic_group, fasta_file, directory):
+    """
+    Creates a BLAST database from a FASTA file.
+
+    Parameters:
+    protein_family (str): The protein family name.
+    taxonomic_group (str): The taxonomic group.
+    fasta_file (str): Path to the FASTA file.
+    directory (str): Directory where the BLAST database will be saved.
+    """
+
+    # 定义database名称
+    file_name = f'{protein_family}_in_{taxonomic_group}_blast_db'
+    # 设置路径：用户设置路径/filename
+    blastdb_output = os.path.join(directory, file_name)
+
+    try:
+        print(f'Makeblastdb is working for you to make {fasta_file} as a blast database.')
+        result = subprocess.run(['makeblastdb', '-in', fasta_file, '-dbtype', 'prot', '-out', blastdb_output],
+                                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred: {e}\n{e.stderr}")
+    else:
+        print(f'Blast database has been saved to {blastdb_output}. You can check it now.')
+        print('#---------------------------')
+
+    return blastdb_output
+
+
+def run_blast(protein_family, taxonomic_group, blast_type, db, directory):
+    file_name = f'{protein_family}_in_{taxonomic_group}_{blast_type}_result'
+    blast_output = os.path.join(directory, file_name)
+
+    while True:
+        try:
+            query_file = input("Please enter the path to query the file: ").strip()
+
+            # Check if file is a FASTA file
+            if not (query_file.endswith('.fasta') or query_file.endswith('.fa')) or not is_fasta(query_file):
+                print("The file does not appear to be a FASTA file.")
+                continue
+
+            # Read the first sequence for type checking
+            with open(query_file, 'r') as file:
+                for line in file:
+                    if line.startswith('>'):
+                        continue  # Skip header lines
+                    first_sequence = line.strip()
+                    break
+
+            # Check sequence type based on blast_type
+            if blast_type == 'blastp' and not is_protein_sequence(first_sequence):
+                print("The file does not contain valid protein sequences for blastp.")
+                continue
+            elif blast_type == 'blastn' and not is_nucleotide_sequence(first_sequence):
+                print("The file does not contain valid nucleotide sequences for blastn.")
+                continue
+
+            blast_command = [blast_type, '-query', query_file, '-db', db, '-out', blast_output]
+            subprocess.run(blast_command, check=True)
+
+        except subprocess.CalledProcessError as e:
+            print(f"Error occurred: {e}")
+        else:
+            print(f"{blast_type} result has been saved to {blast_output}. You can check it now.")
+            print('#---------------------------')
+            return
+
+
+def is_fasta(filename):
+    with open(filename, 'r') as file:
+        first_line = file.readline()
+        return first_line.startswith('>')
+
+def is_protein_sequence(sequence):
+    return all(c in 'ACDEFGHIKLMNPQRSTVWY' for c in sequence.upper())
+
+def is_nucleotide_sequence(sequence):
+    return all(c in 'ACGTN' for c in sequence.upper())
+
+
+def stats_data(protein_family, taxonomic_group, fasta_file):
+    pepstats_output = ask_output_foleder('Pepstats')
+    run_pepstats(protein_family, taxonomic_group, fasta_file, pepstats_output)
+
+
+def run_pepstats(protein_family, taxonomic_group, fasta_file, directory):
+    print('#===========================')
+    print("\nWe will calculate statistics of protein properties！ e.g. Molecular weight, Number of residues, Average residue weight.")
+
+    file_name = f'{protein_family}_in_{taxonomic_group}.pepstats'
+    pepstats_output = os.path.join(directory, file_name)
+
+    try:
+        command = ["pepstats", "-sequence", fasta_file, "-outfile", pepstats_output]
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+            print(f"Error occurred: {e}")
+    else:
+        print(f'Pepstats result has been saved to {pepstats_output}. You can check it now.')
+        print('#===========================')
+
+def tmap(protein_family, taxonomic_group, fasta_file):
+    print('#===========================')
+    print("\nWe will predict and plot transmembrane segments in protein sequences.")
+    tmap_output = ask_output_foleder('Tmap')
+    run_tmap(protein_family, taxonomic_group, fasta_file, tmap_output)
+
+def run_tmap(protein_family, taxonomic_group, fasta_file, directory):
+    file_name = f'{protein_family}_in_{taxonomic_group}.tmap'
+    tmap_output = os.path.join(directory, file_name)
+
+    try:
+        command = ['tmap', '-sequence', fasta_file, '-graph', 'png', '-outfile', tmap_output]
+        subprocess.run(command, check=True)
+    except subprocess.CalledProcessError as e:
+            print(f"Error occurred: {e}")
+    else:
+        print(f'Tmap result has been saved to {tmap_output}. You can check it now.')
+        print('#===========================')
 
 
 def main():
     # 第一步，获取用户输入，找到用户想要的data并简单分析
     fasta_file, taxonomic_group, protein_family, = get_data()
-    # 仅测试用
-    # taxonomic_group = f'Aves'
-    # protein_family = f'glucose-6-phosphatase'
-    # number = 1000
 
     # 得到data后，进入交互界面，用户选择要使用的功能，执行完功能后回到循环再次询问
     while True:
         print(f"\nWhat do you want to do next with your data in {fasta_file}?")
-        print("1. Conservation analysis")
-        print("2. Scan with motifs")
-        print("3. Change dataset")
-        print("4. Blast analysis")
-        print("5. Exit program")
+        print("1. Change dataset: \n\tChange the search criteria to get new data (subsequent outputs will all be based on the new dataset)")
+        print("2. Conservation analysis: \n\tMultiple Sequence Alignment, Conditional Screening, Plotting Conserved Levels")
+        print("3. Scan with motifs: \n\tScan protein sequence(s) of interest with motifs from the PROSITE database")
+        print("4. Blast analysis: \n\tUsing the dataset as a blast database, perform blast analysis on the specified sequences")
+        print("5. View statistical data: \n\tCalculate statistics of protein properties")
+        print("6. Tmap: \n\tPredict and plot transmembrane segments")
+        print("6. Exit program")
 
         choice = input('\nPlease enter the number before the option (e.g., 1, 2, 3): ')
 
         if choice == '1':
-            # 执行 Conservation Analysis
-            conservation_analysis(protein_family, taxonomic_group, fasta_file)
-        elif choice == '2':
-            # 执行 Scan the Prosite Motifs
-            scan_prosite_motifs(protein_family, taxonomic_group, fasta_file)
-        elif choice == '3':
-            # 更改数据
+            # Change the search criteria to get new data (subsequent outputs will all be based on the new dataset)
             fasta_file, taxonomic_group, protein_family = get_data()
+        elif choice == '2':
+            # Multiple Sequence Alignment, Conditional Screening, Plotting Conserved Levels
+            aligned_file = conservation_analysis(protein_family, taxonomic_group, fasta_file)
+        elif choice == '3':
+            # Scan protein sequence(s) of interest with motifs from the PROSITE database
+            scan_prosite_motifs(protein_family, taxonomic_group, fasta_file)
         elif choice == '4':
-            # 执行blast analysis
+            # Using the dataset as a blast database, perform blast analysis on the specified sequences
             blast_analysis(protein_family, taxonomic_group, fasta_file)
         elif choice == '5':
+            #Calculate statistics of protein properties
+            stats_data(protein_family, taxonomic_group, fasta_file)
+        elif choice == '6':
+            #Predict and plot transmembrane segments
+            tmap(protein_family, taxonomic_group, fasta_file)
+        elif choice == '7':
             # 退出程序，打印退出文本
             print("Exiting the program.")
             print('#===========================')
